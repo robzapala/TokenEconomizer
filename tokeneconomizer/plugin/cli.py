@@ -371,7 +371,11 @@ def cmd_toolprune(args):
             print("Codex needs no catalog: its removable capabilities are a fixed set "
                   f"({', '.join(denylist.CODEX_LIVE_CAPABILITIES)}), read from each session.")
             return 0
-        path, tools = toolcheck.refresh_catalog(state_root(), host=host)
+        try:
+            path, tools = toolcheck.refresh_catalog(state_root(), host=host)
+        except RuntimeError as e:
+            print(f"refresh-catalog: {e}", file=sys.stderr)
+            return 1
         print(f"{len(tools)} tools recorded in {path}:\n  " + ", ".join(tools))
         return 0
     if action == "measure":

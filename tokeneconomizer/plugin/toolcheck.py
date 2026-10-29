@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import adapter as live_adapter
 from .denylist import CODEX_TOGGLES, write_json as _write_json
-from .sidecall import claude_flags
+from .sidecall import claude_cli, claude_flags
 
 
 def verify_copilot(repo_root, servers, cli="copilot"):
@@ -58,27 +58,34 @@ def _init_tools(extra_args, cli="claude", timeout=60):
     """Tool list from a `claude -p` session's init event; the process is killed right after it,
     before the model is asked anything."""
     env = dict(os.environ, TE_SIDECALL="1")
+    cli = claude_cli(cli)
+    if not shutil.which(cli):
+        raise RuntimeError(f"`{cli}` not found: put Claude Code's CLI on PATH, or run this from "
+                           "a Claude Code session (which names its own in CLAUDE_CODE_EXECPATH)")
     cmd = [cli, "-p", "Reply with OK", "--output-format", "stream-json", "--verbose",
            "--model", "haiku", "--max-turns", "1"] + claude_flags(cli) + list(extra_args)
-    with tempfile.TemporaryDirectory(prefix="te-probe-") as cwd:
-        p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, text=True, env=env, cwd=cwd)
-        tools, version = None, None
-        deadline = time.time() + timeout
-        try:
-            for line in p.stdout:
-                try:
-                    ev = json.loads(line)
-                except ValueError:
-                    continue
-                if ev.get("type") == "system" and ev.get("subtype") == "init":
-                    tools, version = ev.get("tools"), ev.get("claude_code_version")
-                    break
-                if time.time() > deadline:
-                    break
-        finally:
-            p.kill()
-            p.wait()
+    # Not TemporaryDirectory: on Windows the killed process's children can still hold the
+    # directory as their cwd, and Python 3.10's cleanup of it then recurses until it overflows.
+    cwd = tempfile.mkdtemp(prefix="te-probe-")
+    p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, text=True, env=env, cwd=cwd)
+    tools, version = None, None
+    deadline = time.time() + timeout
+    try:
+        for line in p.stdout:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if ev.get("type") == "system" and ev.get("subtype") == "init":
+                tools, version = ev.get("tools"), ev.get("claude_code_version")
+                break
+            if time.time() > deadline:
+                break
+    finally:
+        p.kill()
+        p.wait()
+        shutil.rmtree(cwd, ignore_errors=True)
     return tools, version
 
 
@@ -197,6 +204,7 @@ def refresh_catalog(state_root, cli=None, host="claude"):
 
 def _prompt_tokens(extra_args, cli="claude", timeout=180):
     env = dict(os.environ, TE_SIDECALL="1")
+    cli = claude_cli(cli)
     cmd = [cli, "-p", "Reply with exactly: OK", "--output-format", "json", "--model", "haiku",
            "--max-turns", "1"] + claude_flags(cli) + list(extra_args)
     with tempfile.TemporaryDirectory(prefix="te-measure-") as cwd:

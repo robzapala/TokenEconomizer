@@ -37,6 +37,7 @@ or the loop guard is (the judge and the nudge writer).
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -103,6 +104,16 @@ def resume(host, root=None):
         return False
 
 
+def claude_cli(cli="claude"):
+    """The `claude` to launch: the one on PATH (resolved, so Windows finds `claude.cmd`), else
+    the binary the running Claude Code names in `CLAUDE_CODE_EXECPATH` -- the desktop app's,
+    which is not on PATH."""
+    if cli != "claude":
+        return cli
+    found = shutil.which(cli) or os.environ.get("CLAUDE_CODE_EXECPATH")
+    return found if found and os.path.isfile(found) else cli
+
+
 _FLAGS = {}
 
 
@@ -120,7 +131,8 @@ def claude_flags(cli="claude"):
 
 
 def claude_call(prompt, model="haiku", cli="claude", timeout=TIMEOUT_S):
-    cmd = [cli, "-p", "--output-format", "json", "--max-turns", "1", "--tools", "",
+    cli = claude_cli(cli)
+    cmd = [cli,"-p", "--output-format", "json", "--max-turns", "1", "--tools", "",
            "--model", model or "haiku"] + claude_flags(cli)
     with tempfile.TemporaryDirectory(prefix="te-side-") as cwd:
         out = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
